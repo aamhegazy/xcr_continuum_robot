@@ -1,0 +1,146 @@
+<?xml version="1.0"?>
+<robot name="trunk" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- ===== Dimensions in metres, measured from the CAD files ===== -->
+  <xacro:property name="connector_height" value="0.016"/>
+  <xacro:property name="post_depth" value="0.005"/>
+  <xacro:property name="post_length" value="0.006"/>
+  <xacro:property name="slice_height" value="0.0125"/>
+  <xacro:property name="stack_step" value="0.012"/>
+  <xacro:property name="bend_limit" value="0.2"/>
+  <xacro:property name="max_squeeze" value="0.006"/>
+  <xacro:property name="mesh_path" value="package://trunk_description/meshes"/>
+
+  <!-- ===== Colours ===== -->
+  <material name="grey">
+    <color rgba="0.6 0.6 0.6 1"/>
+  </material>
+  <material name="black">
+    <color rgba="0.1 0.1 0.1 1"/>
+  </material>
+  <material name="red">
+    <color rgba="0.9 0.1 0.1 1"/>
+  </material>
+
+  <!-- ===== The fixed part: the motor housing ===== -->
+  <link name="base_link">
+    <visual>
+      <origin xyz="0 0 0.02" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.06" length="0.04"/>
+      </geometry>
+      <material name="grey"/>
+    </visual>
+  </link>
+
+  <!-- Same place as base_link, but flipped so its z axis points down the trunk -->
+  <link name="trunk_base"/>
+  <joint name="base_to_trunk" type="fixed">
+    <parent link="base_link"/>
+    <child link="trunk_base"/>
+    <origin xyz="0 0 0" rpy="${pi} 0 0"/>
+  </joint>
+
+  <!-- ===== Macro 1: draw one mesh file at height z in the current link ===== -->
+  <xacro:macro name="part" params="file z color">
+    <visual>
+      <origin xyz="0 0 ${z}" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="${mesh_path}/${file}"/>
+      </geometry>
+      <material name="${color}"/>
+    </visual>
+  </xacro:macro>
+
+    <!-- ===== Macro 2: one bending slice of the flex =====
+       A squeeze joint (slides the slice closer to the one before),
+       a hinge about x, a hinge about y, then the slice's mesh. -->
+  <xacro:macro name="slice" params="unit index parent offset">
+    <link name="${unit}_seg${index}_squeezed"/>
+    <joint name="${unit}_seg${index}_squeeze" type="prismatic">
+      <parent link="${parent}"/>
+      <child link="${unit}_seg${index}_squeezed"/>
+      <origin xyz="0 0 ${offset}" rpy="0 0 0"/>
+      <axis xyz="0 0 1"/>
+      <limit lower="${-max_squeeze}" upper="0" effort="1" velocity="1"/>
+    </joint>
+
+    <link name="${unit}_seg${index}_pivot"/>
+    <joint name="${unit}_seg${index}_bend_x" type="revolute">
+      <parent link="${unit}_seg${index}_squeezed"/>
+      <child link="${unit}_seg${index}_pivot"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <axis xyz="1 0 0"/>
+      <limit lower="${-bend_limit}" upper="${bend_limit}" effort="1" velocity="1"/>
+    </joint>
+
+    <link name="${unit}_seg${index}">
+      <xacro:part file="flex_seg${index}.stl" z="0" color="black"/>
+    </link>
+    <joint name="${unit}_seg${index}_bend_y" type="revolute">
+      <parent link="${unit}_seg${index}_pivot"/>
+      <child link="${unit}_seg${index}"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+      <limit lower="${-bend_limit}" upper="${bend_limit}" effort="1" velocity="1"/>
+    </joint>
+  </xacro:macro>
+
+  <!-- ===== Macro 3: one trunk unit = connector + flex + connector ===== -->
+  <xacro:macro name="trunk_unit" params="unit parent offset">
+
+    <!-- Rigid bottom: a connector, with the flex's bottom posts plugged into it -->
+    <link name="${unit}_bottom">
+      <xacro:part file="connector.stl" z="0" color="grey"/>
+      <xacro:part file="flex_bottom.stl" z="${post_depth}" color="black"/>
+    </link>
+    <joint name="${parent}_to_${unit}_bottom" type="fixed">
+      <parent link="${parent}"/>
+      <child link="${unit}_bottom"/>
+      <origin xyz="0 0 ${offset}" rpy="0 0 0"/>
+    </joint>
+
+    <!-- The bending part: 8 slices, each hanging from the one before -->
+    <xacro:slice unit="${unit}" index="1" parent="${unit}_bottom" offset="${post_depth + post_length}"/>
+    <xacro:slice unit="${unit}" index="2" parent="${unit}_seg1" offset="${slice_height}"/>
+    <xacro:slice unit="${unit}" index="3" parent="${unit}_seg2" offset="${slice_height}"/>
+    <xacro:slice unit="${unit}" index="4" parent="${unit}_seg3" offset="${slice_height}"/>
+    <xacro:slice unit="${unit}" index="5" parent="${unit}_seg4" offset="${slice_height}"/>
+    <xacro:slice unit="${unit}" index="6" parent="${unit}_seg5" offset="${slice_height}"/>
+    <xacro:slice unit="${unit}" index="7" parent="${unit}_seg6" offset="${slice_height}"/>
+    <xacro:slice unit="${unit}" index="8" parent="${unit}_seg7" offset="${slice_height}"/>
+
+    <!-- Rigid top: the flex's top posts, plugged into the second connector -->
+    <link name="${unit}_top">
+      <xacro:part file="flex_top.stl" z="0" color="black"/>
+      <xacro:part file="connector.stl" z="${-post_depth}" color="grey"/>
+    </link>
+    <joint name="${unit}_seg8_to_top" type="fixed">
+      <parent link="${unit}_seg8"/>
+      <child link="${unit}_top"/>
+      <origin xyz="0 0 ${slice_height}" rpy="0 0 0"/>
+    </joint>
+  </xacro:macro>
+
+  <!-- ===== The trunk: three units plugged together ===== -->
+  <xacro:trunk_unit unit="unit1" parent="trunk_base" offset="0"/>
+  <xacro:trunk_unit unit="unit2" parent="unit1_top" offset="${stack_step - post_depth}"/>
+  <xacro:trunk_unit unit="unit3" parent="unit2_top" offset="${stack_step - post_depth}"/>
+
+  <!-- ===== The tip: the outer face of the last connector ===== -->
+  <link name="tip">
+    <visual>
+      <origin xyz="0 0 0.001" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.0205" length="0.002"/>
+      </geometry>
+      <material name="red"/>
+    </visual>
+  </link>
+  <joint name="unit3_top_to_tip" type="fixed">
+    <parent link="unit3_top"/>
+    <child link="tip"/>
+    <origin xyz="0 0 ${connector_height - post_depth}" rpy="0 0 0"/>
+  </joint>
+
+</robot>
